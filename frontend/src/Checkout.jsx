@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "./lib/supabase";
 import { Link } from "react-router-dom";
+import { clearCart } from "./services/cartService";
 
 function Checkout({ cart, setCart }) {
   const [formData, setFormData] = useState({
@@ -95,6 +96,7 @@ if (cart.length === 0) {
 }
 
 alert("Order placed successfully!");
+await clearCart(user.id);
 setCart([]);
     } catch (error) {
       setError(error.message);

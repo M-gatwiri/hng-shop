@@ -2,11 +2,17 @@ import { supabase } from "./lib/supabase";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import { getProducts } from "./services/productService";
+import {
+  getCart,
+  addToCart as addCartItem,
+  decreaseCartItem,
+  removeFromCart as removeCartItem,
+} from "./services/cartService";
 import "./App.css";
 import Checkout from "./Checkout";
 
 
-function Shop({cart, setCart}) {
+function Shop({ cart, setCart}) {
   const [products, setProducts] = useState([]);
   const [error, setError] = useState("");
   const [user, setUser] = useState(null);
@@ -25,58 +31,108 @@ function Shop({cart, setCart}) {
     loadProducts();
   }, []);
 
-  useEffect(() => {
+ useEffect(() => {
   async function getCurrentUser() {
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     setUser(user);
+
+    if (user) {
+      try {
+        const savedCart = await getCart(user.id);
+        setCart(savedCart);
+      } catch (error) {
+        setError(error.message);
+      }
+    }
   }
 
   getCurrentUser();
-}, []);
+}, [setCart]);
 
- function addToCart(product) {
-  setCart((currentCart) => {
-    const existingProduct = currentCart.find(
-      (item) => item.id === product.id
-    );
+useEffect(() => {
+  if (!user) {
+    return;
+  }
 
-    if (existingProduct) {
-      return currentCart.map((item) =>
-        item.id === product.id
-          ? { ...item, quantity: item.quantity + 1 }
-          : item
-      );
-    }
+  const channel = supabase
+    .channel(`cart-${user.id}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "cart_items",
+        filter: `user_id=eq.${user.id}`,
+      },
+      async () => {
+        try {
+          const updatedCart = await getCart(user.id);
+          setCart(updatedCart);
+        } catch (error) {
+          setError(error.message);
+        }
+      }
+    )
+    .subscribe();
 
-    return [...currentCart, { ...product, quantity: 1 }];
-  });
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [user, setCart]);
 
-  setCartMessage(`${product.name} added to cart!`);
+async function addToCart(product) {
+  if (!user) {
+    setError("Please sign in before adding items to your cart.");
+    return;
+  }
 
-  setTimeout(() => {
-    setCartMessage("");
-  }, 2000);
+  try {
+    await addCartItem(user.id, product.id);
+
+    const updatedCart = await getCart(user.id);
+    setCart(updatedCart);
+
+    setCartMessage(`${product.name} added to cart!`);
+
+    setTimeout(() => {
+      setCartMessage("");
+    }, 2000);
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
-  function decreaseQuantity(productId) {
-  setCart((currentCart) => {
-    return currentCart
-      .map((item) =>
-        item.id === productId
-          ? { ...item, quantity: item.quantity - 1 }
-          : item
-      )
-      .filter((item) => item.quantity > 0);
-  });
+ async function decreaseQuantity(productId) {
+  if (!user) {
+    return;
+  }
+
+  try {
+    await decreaseCartItem(user.id, productId);
+
+    const updatedCart = await getCart(user.id);
+    setCart(updatedCart);
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
-function removeFromCart(productId) {
-  setCart((currentCart) =>
-    currentCart.filter((item) => item.id !== productId)
-  );
+async function removeFromCart(productId) {
+  if (!user) {
+    return;
+  }
+
+  try {
+    await removeCartItem(user.id, productId);
+
+    const updatedCart = await getCart(user.id);
+    setCart(updatedCart);
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
   const cartItemCount = cart.reduce(
@@ -108,6 +164,7 @@ async function signOut() {
     setError(error.message);
   } else {
     setUser(null);
+    setCart([]);
   }
 }
 
